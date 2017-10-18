@@ -9,8 +9,9 @@ class  ConvText(nn.Module):
     """
     def __init__(self, args, n_vocab, embed_dim, n_classes, dropout=0.5):
         super(ConvText,self).__init__()
+        print("Building Conv model...")
         self.args = args
-        c_out = args.kernel_num
+        c_out = args.n_kernel
         kernels = args.kernel_sizes
 
         self.embed = nn.Embedding(n_vocab, embed_dim)
@@ -19,21 +20,16 @@ class  ConvText(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.fc = nn.Linear(len(kernels) * c_out, n_classes)
 
-    def conv_and_pool(self, x, conv):
-        x = F.relu(conv(x)).squeeze(3) #(N,c_out,W)
-        x = F.max_pool1d(x, x.size(2)).squeeze(2)
-        return x
-
     def forward(self, x):
-        x = self.embed(x)  #  [i, b, e]
+        x = self.embed(x)   #  [b, i] -> [b, i, e]
         if self.args.static:
             x = Variable(x)
-        x = x.unsqueeze(1) # (N,c_in,W,D)
-        # [(N,c_out,W), ...]*len(Ks)
+        x = x.unsqueeze(1)  #  [b, c_in, i, e]
+        #  [(b, c_out, i), ...] * len(kernels)
         x = [F.relu(conv(x)).squeeze(3) for conv in self.convs]
-        # [(N,c_out), ...]*len(Ks)
+        #  [(b, c_out), ...] * len(kernels)
         x = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in x]
         x = torch.cat(x, 1)
-        x = self.dropout(x) # (N,len(Ks)*c_out)
-        logit = self.fc(x) # (N,C)
+        x = self.dropout(x)  # (b, len(kernels) * c_out)
+        logit = self.fc(x)   # (b, o)
         return logit

@@ -15,17 +15,19 @@ class BasicLSTM(nn.Module):
 
         self.embed = nn.Embedding(n_vocab, embed_dim)
         self.dropout = nn.Dropout(dropout)
-        self.lstm = nn.LSTM(embed_dim, self.hidden_dim, num_layers=self.n_layers)
+        self.lstm = nn.LSTM(embed_dim, self.hidden_dim,
+                            num_layers=self.n_layers, batch_first=True)
         self.out = nn.Linear(self.hidden_dim, n_classes)
 
-    def forward(self, inputs):
-        state = self._init_state(b_size=inputs.size()[1])
-
-        # inputs: [i, b]
-        embedded = self.embed(inputs)  # [i, b, e]
-        out, _ = self.lstm(embedded, state)  # [i, b, h]
-        logit = self.out(out[-1])  # [b, h] -> [b, o]
-        return logits
+    def forward(self, x):
+        b_size = x.size()[0]
+        h_0 = self._init_state(b_size=b_size)
+        x = self.embed(x)  #  [b, i] -> [b, i, e]
+        x, _ = self.lstm(x, h_0)  # [i, b, h]
+        h_t = x[:,-1,:]
+        self.dropout(h_t)
+        logit = self.out(h_t)  # [b, h] -> [b, o]
+        return logit
 
     def _init_state(self, b_size=1):
         weight = next(self.parameters()).data

@@ -1,142 +1,96 @@
-import os
-import sys
-import datetime
-import torch
-import torchtext.data as data
-import torch.autograd as autograd
-import torch.nn as nn
-import torch.nn.functional as F
-
-from classifiers import BasicLSTM, AttentionLSTM, ConvText
-from args import parse_arguments
-from utils import imdb
-
-classification_models = {
-    "BasicLSTM": BasicLSTM,
-    "AttentionLSTM": AttentionLSTM,
-    "ConvText": ConvText
-}
-
-def train(model, train_iter, val_iter, args):
-    """train model"""
-    if args.cuda:
-        model.cuda()
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    steps = 0
-    model.train()
-    for epoch in range(1, args.epochs+1):
-        for batch in train_iter:
-            x, y = batch.text, batch.label
-            x.data.t_(), y.data.sub_(1)  # batch first, index align
-            if args.cuda:
-                x, y = x.cuda(), y.cuda()
-            optimizer.zero_grad()
-            logit = model(x)
-            loss = F.cross_entropy(logit, y)
-            loss.backward()
-            optimizer.step()
-            steps += 1
-            if steps % args.log_interval == 0:
-                corrects = (torch.max(logit, 1)
-                            [1].view(y.size()).data == y.data).sum()
-                accuracy = 100.0 * corrects/batch.batch_size
-                sys.stdout.write(
-                    '\rBatch[{}] - loss: {:.6f}  acc: {:.4f}%({}/{})'.format(
-                    steps, loss.data[0], accuracy, corrects, batch.batch_size))
-            if steps % args.test_interval == 0:
-                evaluate(model, val_iter, args)
-            if steps % args.save_interval == 0:
-                if not os.path.isdir(args.save_dir):
-                    os.makedirs(args.save_dir)
-                save_prefix = os.path.join(args.save_dir, 'snapshot')
-                save_path = '{}_steps{}.pt'.format(save_prefix, steps)
-                torch.save(model, save_path)
-
-def evaluate(model, val_iter, args):
-    """evaluate model"""
-    model.eval()
-    corrects, avg_loss = 0, 0
-    for batch in val_iter:
-        x, y = batch.text, batch.label
-        x.data.t_(), y.data.sub_(1)  # batch first, index align
-        if args.cuda:
-            x, y = x.cuda(), y.cuda()
-        logit = model(x)
-        loss = F.cross_entropy(logit, y, size_average=False)
-        avg_loss += loss.data[0]
-        corrects += (torch.max(logit, 1)
-                     [1].view(y.size()).data == y.data).sum()
-    size = len(val_iter.dataset)
-    avg_loss = avg_loss / size
-    accuracy = 100.0 * corrects / size
-    print('\nEvaluation - loss: {:.6f}  acc: {:.4f}%({}/{}) \n'.format(
-          avg_loss, accuracy, corrects, size))
-    model.train() # return to training mode
-
-def predict(model, text, TEXT, LABEL):
-    """predict"""
-    assert isinstance(text, str)
-    model.eval()
-    # text = TEXT.tokenize(text)
-    text = TEXT.preprocess(text)
-    text = [[TEXT.vocab.stoi[x] for x in text]]
-    x = TEXT.tensor_type(text)
-    x = autograd.Variable(x, volatile=True)
-    print(x)
-    output = model(x)
-    _, predicted = torch.max(output, 1)
-    return LABEL.vocab.itos[predicted.data[0][0]+1]
 
 
-def main():
-    # get hyper parameters
-    args = parse_arguments()
+def test():
+    """
+    """
+    model = atn.ATN(images_holder, label_holder, p_keep_holder, rerank_holder)
 
-    # load data
-    print("\nLoading data...")
-    TEXT = data.Field(lower=True)
-    LABEL = data.Field(sequential=False)
-    train_iter, val_iter = imdb(TEXT, LABEL, args.batch_size)
+    with tf.Session() as sess:
+        sess.run(tf.global_variables_initializer())
+        model.load(sess, './Models/AE_for_ATN')
 
-    # update args
-    n_vocab = len(TEXT.vocab)
-    n_classes = len(LABEL.vocab) - 1
-    args.cuda = torch.cuda.is_available()
-    args.kernel_sizes = [int(k) for k in args.kernel_sizes.split(',')]
-    args.save_dir = os.path.join(args.save_dir,
-            datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+        adv_images = sess.run(
+            model.prediction,
+            feed_dict={images_holder: mnist.test.images}
+        )
 
-    # print args
-    print("\nParameters:")
-    for attr, value in sorted(args.__dict__.items()):
-        print("\t{}={}".format(attr.upper(), value))
+        print('Original accuracy: {0:0.5f}'.format(
+            sess.run(model._target.accuracy, feed_dict={
+                images_holder: mnist.test.images,
+                label_holder: mnist.test.labels,
+                p_keep_holder: 1.0
+            })))
 
-    # initialize/load the model
-    if args.snapshot is None:
-        classifier = classificaiton_models[args.model]
-        classifier = classifier(args, n_vocab, embed_dim, n_classes, args.dropout)
-    else :
-        print('\nLoading model from [%s]...' % args.snapshot)
-        try:
-            classifier = torch.load(args.snapshot)
-        except :
-            print("Sorry, This snapshot doesn't exist."); exit()
-    if args.cuda:
-        classifier = classifier.cuda()
+        print('Attacked accuracy: {0:0.5f}'.format(
+            sess.run(model._target.accuracy, feed_dict={
+                images_holder: adv_images,
+                label_holder: mnist.test.labels,
+                p_keep_holder: 1.0
+            })))
 
-    # train, test, or predict
-    if args.predict is not None:
-        label = predict(classifier, args.predict, TEXT, LABEL)
-        print('\n[Text]  {}[Label] {}\n'.format(args.predict, label))
-    elif args.test :
-        try:
-            evaluate(classifier, test_iter, args)
-        except Exception as e:
-            print("\nSorry. The test dataset doesn't  exist.\n")
-    else :
-        print()
-        train(classifier, train_iter, val_iter, args)
+        # Show some results.
+        f, a = plt.subplots(2, 10, figsize=(10, 2))
+        for i in range(10):
+            a[0][i].imshow(np.reshape(mnist.test.images[i], (28, 28)))
+            a[1][i].imshow(np.reshape(adv_images[i], (28, 28)))
+        plt.show()
 
+
+def train():
+    """
+    """
+    attack_target = 8
+    alpha = 1.5
+    training_epochs = 10
+    batch_size = 64
+
+    model = atn.ATN(images_holder, label_holder, p_keep_holder, rerank_holder)
+
+    with tf.Session() as sess:
+        sess.run(tf.global_variables_initializer())
+        model._target.load(sess, './Models/AE_for_ATN/BasicCNN')
+
+        total_batch = int(mnist.train.num_examples/batch_size)
+        for epoch in range(training_epochs):
+            for i in range(total_batch):
+                batch_xs, batch_ys = mnist.train.next_batch(batch_size)
+
+                r_res = sess.run(model._target.prediction,
+                                 feed_dict={
+                                     images_holder: batch_xs,
+                                     p_keep_holder: 1.0
+                                 })
+                r_res[:, attack_target] = np.max(r_res, axis=1) * alpha
+                norm_div = np.linalg.norm(r_res, axis=1)
+                for i in range(len(r_res)):
+                    r_res[i] /= norm_div[i]
+
+                _, loss = sess.run(model.optimization, feed_dict={
+                    images_holder: batch_xs,
+                    p_keep_holder: 1.0,
+                    rerank_holder: r_res
+                })
+
+            print('Eopch {0} completed. loss = {1}'.format(epoch+1, loss))
+        print("Odef main(arvg=None):
+    """
+    """
+    if FLAGS.train:
+        train()
+    else:
+        test()
+ptimization Finished!")
+
+        model.save(sess, './Models/AE_for_ATN')
+        print("Trained params have been saved to './Models/AE_for_ATN'")
+
+def main(arvg=None):
+    """
+    """
+    if FLAGS.train:
+        train()
+    else:
+        test()
 
 if __name__ == '__main__':
     main()
